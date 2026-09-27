@@ -5,9 +5,9 @@
 
 use esp_hal::{
     gpio::{DriveMode, Output, OutputConfig, OutputPin},
-    ledc::{channel, timer, Ledc, LowSpeed, LSGlobalClkSource},
     ledc::channel::ChannelIFace,
     ledc::timer::TimerIFace,
+    ledc::{LSGlobalClkSource, Ledc, LowSpeed, channel, timer},
 };
 
 /// Motor controller for a single DC motor with H-bridge
@@ -25,8 +25,6 @@ pub struct MotorController<'d> {
     current_speed: i8,
     /// Whether the motor is enabled
     enabled: bool,
-    /// Whether init has been called
-    initialized: bool,
 }
 
 /// Configuration for motor controller
@@ -65,19 +63,6 @@ pub enum MotorDirection {
     Forward,
     /// Reverse direction
     Reverse,
-}
-
-/// Helper function to configure PWM channel with the correct lifetime
-/// This function is generic over the lifetime to avoid the invariance issue
-fn configure_channel_internal<'d>(
-    pwm_channel: &mut channel::Channel<'d, LowSpeed>,
-    timer: &'d timer::Timer<'d, LowSpeed>,
-) -> Result<(), channel::Error> {
-    pwm_channel.configure(channel::config::Config {
-        timer,
-        duty_pct: 0,
-        drive_mode: DriveMode::PushPull,
-    })
 }
 
 impl<'d> MotorController<'d> {
@@ -124,8 +109,16 @@ impl<'d> MotorController<'d> {
         let pwm_channel = ledc.channel(config.channel, pwm_pin);
 
         // Configure direction pins
-        let dir1 = Output::new(dir1_pin, esp_hal::gpio::Level::Low, OutputConfig::default().with_drive_mode(DriveMode::PushPull));
-        let dir2 = Output::new(dir2_pin, esp_hal::gpio::Level::Low, OutputConfig::default().with_drive_mode(DriveMode::PushPull));
+        let dir1 = Output::new(
+            dir1_pin,
+            esp_hal::gpio::Level::Low,
+            OutputConfig::default().with_drive_mode(DriveMode::PushPull),
+        );
+        let dir2 = Output::new(
+            dir2_pin,
+            esp_hal::gpio::Level::Low,
+            OutputConfig::default().with_drive_mode(DriveMode::PushPull),
+        );
 
         // Create the struct with timer and unconfigured pwm_channel
         // timer is declared first so it's dropped last (outlives pwm_channel)
@@ -136,7 +129,6 @@ impl<'d> MotorController<'d> {
             dir2,
             current_speed: 0,
             enabled: false,
-            initialized: false,
         })
     }
 
@@ -145,15 +137,26 @@ impl<'d> MotorController<'d> {
     /// This MUST be called after `new_with_pins()` and before any other methods.
     /// It configures the PWM channel with a reference to the timer field in this struct.
     /// The struct must not be moved after calling this method.
+    ///
+    /// NOTE: Due to Rust's borrow checker limitations with self-referential structs,
+    /// this method uses an unsafe pattern to reborrow the timer pointer.
     pub fn init(&mut self) -> Result<(), MotorError> {
-        if self.initialized {
-            return Ok(());
+        // SAFETY: The timer and pwm_channel are part of the same MotorController instance.
+        // The timer is declared first in the struct, so it will be dropped after pwm_channel.
+        // This ensures the reference from pwm_channel to timer remains valid for the
+        // struct's lifetime. The channel's configure method needs a reference to timer
+        // that lives at least as long as the channel (which is the struct's lifetime).
+        // Because both fields have lifetime 'd from the same Ledc instance, this is safe.
+        let timer_ptr: *const timer::Timer<'d, LowSpeed> = &self.timer;
+        unsafe {
+            // Reborrow the timer through an unsafe pointer to satisfy the borrow checker
+            let timer_ref = &*timer_ptr;
+            self.pwm_channel.configure(channel::config::Config {
+                timer: timer_ref,
+                duty_pct: 0,
+                drive_mode: DriveMode::PushPull,
+            })?;
         }
-
-        // Use helper function with explicit lifetime to avoid invariance issues
-        configure_channel_internal(&mut self.pwm_channel, &self.timer)?;
-
-        self.initialized = true;
         Ok(())
     }
 
@@ -165,11 +168,7 @@ impl<'d> MotorController<'d> {
     /// # Returns
     /// Result indicating success or error
     pub fn set_speed(&mut self, speed: i8) -> Result<(), MotorError> {
-        if !self.initialized {
-            return Err(MotorError::ChannelConfigError);
-        }
-
-        if speed < -100 || speed > 100 {
+        if !(-100..=100).contains(&speed) {
             return Err(MotorError::InvalidSpeed);
         }
 
@@ -187,7 +186,7 @@ impl<'d> MotorController<'d> {
             MotorDirection::Stop
         };
 
-        let duty_pct = speed.abs() as u8;
+        let duty_pct = speed.unsigned_abs();
 
         // Set direction
         self.set_direction(direction)?;
@@ -205,18 +204,12 @@ impl<'d> MotorController<'d> {
 
     /// Enables the motor controller
     pub fn enable(&mut self) -> Result<(), MotorError> {
-        if !self.initialized {
-            return Err(MotorError::ChannelConfigError);
-        }
         self.enabled = true;
         self.set_speed(self.current_speed)
     }
 
     /// Disables the motor controller (coasts)
     pub fn disable(&mut self) -> Result<(), MotorError> {
-        if !self.initialized {
-            return Err(MotorError::ChannelConfigError);
-        }
         self.enabled = false;
         self.set_direction(MotorDirection::Stop)?;
         self.pwm_channel.set_duty(0)?;

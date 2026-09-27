@@ -1,8 +1,9 @@
-//! Motor Controller Tests
+//! Motor Controller Tests - no_std compatible
 
+#![no_std]
 #![cfg(test)]
 
-use rc_car::drivers::motor::{MotorController, MotorConfig, MotorDirection, MotorError};
+use rc_car::drivers::motor::{MotorConfig, MotorDirection, MotorError};
 
 #[test]
 fn test_motor_config_default() {
