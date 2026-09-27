@@ -1,2 +1,7 @@
-# Keep user/runtime configuration values in this file.
-[env]
+[target.xtensa-esp32-none-elf]
+runner = "espflash flash --monitor --chip esp32"
+
+[build]
+rustflags = [
+  "-C", "link-arg=-nostartfiles",
+]

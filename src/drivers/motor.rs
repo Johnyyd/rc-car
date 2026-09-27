@@ -69,16 +69,6 @@ pub enum MotorDirection {
 
 /// Helper function to configure PWM channel with the correct lifetime
 /// This function is generic over the lifetime to avoid the invariance issue
-fn configure_channel_internal<'d>(
-    pwm_channel: &mut channel::Channel<'d, LowSpeed>,
-    timer: &'d timer::Timer<'d, LowSpeed>,
-) -> Result<(), channel::Error> {
-    pwm_channel.configure(channel::config::Config {
-        timer,
-        duty_pct: 0,
-        drive_mode: DriveMode::PushPull,
-    })
-}
 
 impl<'d> MotorController<'d> {
     /// Creates a new motor controller with explicit PWM and direction pins
@@ -150,8 +140,16 @@ impl<'d> MotorController<'d> {
             return Ok(());
         }
 
-        // Use helper function with explicit lifetime to avoid invariance issues
-        configure_channel_internal(&mut self.pwm_channel, &self.timer)?;
+        // Use unsafe pointer to work around lifetime invariance issue with LEDC channel
+        // This is safe because timer is first in struct and lives as long as pwm_channel
+        let timer_ptr = &self.timer as *const timer::Timer<'_, LowSpeed>;
+        let timer_ref = unsafe { &*timer_ptr };
+
+        self.pwm_channel.configure(channel::config::Config {
+            timer: timer_ref,
+            duty_pct: 0,
+            drive_mode: DriveMode::PushPull,
+        })?;
 
         self.initialized = true;
         Ok(())

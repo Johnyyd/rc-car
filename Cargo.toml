@@ -11,7 +11,6 @@ path = "./src/bin/main.rs"
 [dependencies]
 esp-hal = { version = "~1.2.2", features = ["esp32"] }
 
-
 esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32"] }
 
 critical-section = "1.2.0"
@@ -28,3 +27,11 @@ codegen-units = 1     # LLVM can perform better optimizations using a single thr
 debug         = 2     # prefer slower builds but better debugging experience
 lto           = 'fat'
 opt-level     = 's'
+
+[lib]
+name = "rc_car"
+path = "src/lib.rs"
+
+[build-dependencies]
+esp-hal = { version = "~1.2.2", features = ["esp32"] }
+
