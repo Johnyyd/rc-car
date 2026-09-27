@@ -1,6 +1,7 @@
 #![no_std]
 
 pub mod drivers;
+pub mod control;
 
 #[cfg(test)]
 mod tests {
