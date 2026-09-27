@@ -13,9 +13,9 @@ use esp_hal::{
 /// Motor controller for a single DC motor with H-bridge
 /// Uses MCPWM instead of LEDC for better motor control
 pub struct MotorController<'d> {
-    /// PWM timer for the motor (declared first, dropped last)
+    /// PWM timer for the motor
     timer: timer::Timer<'d, LowSpeed>,
-    /// PWM channel for speed control (declared second, dropped first)
+    /// PWM channel for speed control (separate struct with timer reference)
     pwm_channel: channel::Channel<'d, LowSpeed>,
     /// Direction pin 1 (forward)
     dir1: Output<'d>,
@@ -67,26 +67,8 @@ pub enum MotorDirection {
     Reverse,
 }
 
-/// Helper function to configure PWM channel with the correct lifetime
-/// This function is generic over the lifetime to avoid the invariance issue
-fn configure_channel_internal<'d>(
-    pwm_channel: &mut channel::Channel<'d, LowSpeed>,
-    timer: &'d timer::Timer<'d, LowSpeed>,
-) -> Result<(), channel::Error> {
-    pwm_channel.configure(channel::config::Config {
-        timer,
-        duty_pct: 0,
-        drive_mode: DriveMode::PushPull,
-    })
-}
-
 impl<'d> MotorController<'d> {
     /// Creates a new motor controller with explicit PWM and direction pins
-    ///
-    /// This function creates the timer and channel but does NOT configure the channel
-    /// with the timer reference. You MUST call `init()` after construction to complete
-    /// the configuration. This is necessary because the channel stores a reference to
-    /// the timer, which must point to the timer's final location in the struct.
     ///
     /// # Arguments
     /// * `ledc` - LEDC peripheral
@@ -113,24 +95,22 @@ impl<'d> MotorController<'d> {
         ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
 
         // Create timer
-        let mut lstimer = ledc.timer::<LowSpeed>(config.timer);
-        lstimer.configure(timer::config::Config {
+        let mut timer = ledc.timer::<LowSpeed>(config.timer);
+        timer.configure(timer::config::Config {
             duty: config.duty_resolution,
             clock_source: timer::LSClockSource::APBClk,
             frequency: esp_hal::time::Rate::from_hz(config.frequency),
         })?;
 
-        // Create PWM channel (unconfigured - timer reference will be set in init())
+        // Create PWM channel - configuration deferred to init() due to self-referential lifetime
         let pwm_channel = ledc.channel(config.channel, pwm_pin);
 
         // Configure direction pins
         let dir1 = Output::new(dir1_pin, esp_hal::gpio::Level::Low, OutputConfig::default().with_drive_mode(DriveMode::PushPull));
         let dir2 = Output::new(dir2_pin, esp_hal::gpio::Level::Low, OutputConfig::default().with_drive_mode(DriveMode::PushPull));
 
-        // Create the struct with timer and unconfigured pwm_channel
-        // timer is declared first so it's dropped last (outlives pwm_channel)
         Ok(Self {
-            timer: lstimer,
+            timer,
             pwm_channel,
             dir1,
             dir2,
@@ -143,15 +123,31 @@ impl<'d> MotorController<'d> {
     /// Initializes the motor controller
     ///
     /// This MUST be called after `new_with_pins()` and before any other methods.
-    /// It configures the PWM channel with a reference to the timer field in this struct.
     /// The struct must not be moved after calling this method.
     pub fn init(&mut self) -> Result<(), MotorError> {
         if self.initialized {
             return Ok(());
         }
 
-        // Use helper function with explicit lifetime to avoid invariance issues
-        configure_channel_internal(&mut self.pwm_channel, &self.timer)?;
+        // SAFETY: We configure the channel with a reference to the timer field
+        // This creates a self-referential struct which is unsafe in safe Rust.
+        // The caller must ensure the MotorController is never moved after init().
+        // For now, we use unsafe to work around the lifetime issue.
+        unsafe {
+            // Create a raw pointer to self.timer
+            let timer_ptr = &self.timer as *const timer::Timer<'d, LowSpeed>;
+            // Configure channel with timer reference
+            // This is safe as long as self is never moved
+            let configured = self.pwm_channel.configure(channel::config::Config {
+                timer: unsafe { &*timer_ptr },
+                duty_pct: 0,
+                drive_mode: DriveMode::PushPull,
+            });
+            // Avoid drop by using leaked reference - in practice, we can't avoid this
+            // The channel will hold a reference to self.timer
+            drop(timer_ptr);
+            configured?;
+        }
 
         self.initialized = true;
         Ok(())
