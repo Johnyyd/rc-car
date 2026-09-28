@@ -4,6 +4,10 @@ name         = "rc-car"
 rust-version = "1.95"
 version      = "0.1.0"
 
+[lib]
+name = "rc_car"
+path = "src/lib.rs"
+
 [[bin]]
 name = "rc-car"
 path = "./src/bin/main.rs"

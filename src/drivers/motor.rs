@@ -5,9 +5,9 @@
 
 use esp_hal::{
     gpio::{DriveMode, Output, OutputConfig, OutputPin},
-    ledc::{channel, timer, Ledc, LowSpeed, LSGlobalClkSource},
     ledc::channel::ChannelIFace,
     ledc::timer::TimerIFace,
+    ledc::{LSGlobalClkSource, Ledc, LowSpeed, channel, timer},
 };
 
 /// Motor controller for a single DC motor with H-bridge
@@ -25,8 +25,6 @@ pub struct MotorController<'d> {
     current_speed: i8,
     /// Whether the motor is enabled
     enabled: bool,
-    /// Whether init has been called
-    initialized: bool,
 }
 
 /// Configuration for motor controller
@@ -145,8 +143,16 @@ impl<'d> MotorController<'d> {
         let pwm_channel = ledc.channel(config.channel, pwm_pin);
 
         // Configure direction pins
-        let dir1 = Output::new(dir1_pin, esp_hal::gpio::Level::Low, OutputConfig::default().with_drive_mode(DriveMode::PushPull));
-        let dir2 = Output::new(dir2_pin, esp_hal::gpio::Level::Low, OutputConfig::default().with_drive_mode(DriveMode::PushPull));
+        let dir1 = Output::new(
+            dir1_pin,
+            esp_hal::gpio::Level::Low,
+            OutputConfig::default().with_drive_mode(DriveMode::PushPull),
+        );
+        let dir2 = Output::new(
+            dir2_pin,
+            esp_hal::gpio::Level::Low,
+            OutputConfig::default().with_drive_mode(DriveMode::PushPull),
+        );
 
         Ok(Self {
             timer,
@@ -169,6 +175,7 @@ impl<'d> MotorController<'d> {
     }
     /// This MUST be called after `new_with_pins()` and before any other methods.
     /// The struct must not be moved after calling this method.
+
     pub fn init(&'d mut self) -> Result<(), MotorError> {
         if self.initialized {
             return Ok(());
@@ -231,6 +238,26 @@ impl<'d> MotorController<'d> {
             })?;
         }
         self.initialized = true;
+    ///
+    /// NOTE: Due to Rust's borrow checker limitations with self-referential structs,
+    /// this method uses an unsafe pattern to reborrow the timer pointer.
+    pub fn init(&mut self) -> Result<(), MotorError> {
+        // SAFETY: The timer and pwm_channel are part of the same MotorController instance.
+        // The timer is declared first in the struct, so it will be dropped after pwm_channel.
+        // This ensures the reference from pwm_channel to timer remains valid for the
+        // struct's lifetime. The channel's configure method needs a reference to timer
+        // that lives at least as long as the channel (which is the struct's lifetime).
+        // Because both fields have lifetime 'd from the same Ledc instance, this is safe.
+        let timer_ptr: *const timer::Timer<'d, LowSpeed> = &self.timer;
+        unsafe {
+            // Reborrow the timer through an unsafe pointer to satisfy the borrow checker
+            let timer_ref = &*timer_ptr;
+            self.pwm_channel.configure(channel::config::Config {
+                timer: timer_ref,
+                duty_pct: 0,
+                drive_mode: DriveMode::PushPull,
+            })?;
+        }
         Ok(())
     }
 
@@ -241,6 +268,7 @@ impl<'d> MotorController<'d> {
     ///
     /// # Returns
     /// Result indicating success or error
+
     pub fn set_speed(&mut self, speed: i8) -> Result<(), &'static str> {
         if !self.initialized {
             return Err("not initialized");
@@ -248,6 +276,7 @@ impl<'d> MotorController<'d> {
 
         if speed < -100 || speed > 100 {
             return Err("invalid speed");
+
         }
 
         self.current_speed = speed;
@@ -256,12 +285,21 @@ impl<'d> MotorController<'d> {
             return Ok(());
         }
 
-        // In real hardware, we would:
-        // 1. Set the direction pins based on the sign of speed
-        // 2. Set the PWM duty cycle based on the absolute value of speed
-        // For testing, we just track the state and use the pure functions for validation.
-        let _direction = speed_to_direction(speed);
-        let _duty_pct = speed_to_duty(speed);
+        let direction = if speed > 0 {
+            MotorDirection::Forward
+        } else if speed < 0 {
+            MotorDirection::Reverse
+        } else {
+            MotorDirection::Stop
+        };
+
+        let duty_pct = speed.unsigned_abs();
+
+        // Set direction
+        self.set_direction(direction)?;
+
+        // Set PWM duty cycle
+        self.pwm_channel.set_duty(duty_pct)?;
 
         Ok(())
     }
@@ -272,10 +310,8 @@ impl<'d> MotorController<'d> {
     }
 
     /// Enables the motor controller
-    pub fn enable(&mut self) -> Result<(), &'static str> {
-        if !self.initialized {
-            return Err("not initialized");
-        }
+
+    pub fn enable(&mut self) -> Result<(), MotorError> {
         self.enabled = true;
         // When enabling, we should set the speed to the current speed
         self.set_speed(self.current_speed)
@@ -300,5 +336,30 @@ impl<'d> MotorController<'d> {
     /// Checks if the motor is enabled
     pub fn is_enabled(&self) -> bool {
         self.enabled
+    }
+}
+
+/// Motor controller errors
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MotorError {
+    /// Invalid speed value (must be -100 to 100)
+    InvalidSpeed,
+    /// PWM configuration error
+    PwmConfigError,
+    /// Timer configuration error
+    TimerConfigError,
+    /// Channel configuration error
+    ChannelConfigError,
+}
+
+impl From<esp_hal::ledc::timer::Error> for MotorError {
+    fn from(_: esp_hal::ledc::timer::Error) -> Self {
+        MotorError::TimerConfigError
+    }
+}
+
+impl From<esp_hal::ledc::channel::Error> for MotorError {
+    fn from(_: esp_hal::ledc::channel::Error) -> Self {
+        MotorError::ChannelConfigError
     }
 }

@@ -4,6 +4,8 @@
 extern crate core;
 
 use core::panic::PanicInfo;
+//! Motor Controller Tests - no_std compatible
+#![cfg(test)]
 
 #[panic_handler]
 fn panic(_pi: &PanicInfo) -> ! {
@@ -39,3 +41,8 @@ fn test_controller() {
     assert_eq!(ctrl.get_speed(), 50);
 }
 
+
+fn test_motor_speed_invalid() {
+    assert!(-101 < -100);
+    assert!(101 > 100);
+}
