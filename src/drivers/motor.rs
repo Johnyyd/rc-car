@@ -162,7 +162,7 @@ impl<'d> MotorController<'d> {
     }
     /// This MUST be called after `new_with_pins()` and before any other methods.
     /// The struct must not be moved after calling this method.
-    pub fn init(&mut self) -> Result<(), MotorError> {
+    pub fn init(&'d mut self) -> Result<(), MotorError> {
         if self.initialized {
             return Ok(());
         }
@@ -195,7 +195,11 @@ impl<'d> MotorController<'d> {
             drop(timer_ptr);
             configured?;
         }
-
+        self.pwm_channel.configure(channel::config::Config {
+            timer: &self.timer,
+            duty_pct: 0,
+            drive_mode: DriveMode::PushPull,
+        })?;
         self.initialized = true;
         Ok(())
     }
