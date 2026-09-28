@@ -2,7 +2,32 @@
 //!
 //! This module provides a high-level interface for controlling DC motors using
 //! the ESP32's LEDC peripheral for PWM generation.
-//! In this test environment, we mock the hardware dependencies.
+
+use esp_hal::{
+    gpio::{DriveMode, Output, OutputConfig, OutputPin},
+    ledc::{channel, timer, Ledc, LowSpeed, LSGlobalClkSource},
+    ledc::channel::ChannelIFace,
+    ledc::timer::TimerIFace,
+};
+
+/// Motor controller for a single DC motor with H-bridge
+/// Uses MCPWM instead of LEDC for better motor control
+pub struct MotorController<'d> {
+    /// PWM timer for the motor
+    timer: timer::Timer<'d, LowSpeed>,
+    /// PWM channel for speed control (separate struct with timer reference)
+    pwm_channel: channel::Channel<'d, LowSpeed>,
+    /// Direction pin 1 (forward)
+    dir1: Output<'d>,
+    /// Direction pin 2 (reverse)
+    dir2: Output<'d>,
+    /// Current speed (-100 to 100)
+    current_speed: i8,
+    /// Whether the motor is enabled
+    enabled: bool,
+    /// Whether init has been called
+    initialized: bool,
+}
 
 /// Configuration for motor controller
 #[derive(Debug, Clone, Copy)]
@@ -74,11 +99,8 @@ pub struct MotorController {
     initialized: bool,
 }
 
-impl MotorController {
+impl<'d> MotorController<'d> {
     /// Creates a new motor controller with explicit PWM and direction pins
-    ///
-    /// In the real implementation, this would configure the ESP32 LEDC peripheral.
-    /// For testing, we ignore the hardware parameters and just initialize the state.
     ///
     /// # Arguments
     /// * `_ledc` - LEDC peripheral (ignored in mock)
@@ -89,20 +111,41 @@ impl MotorController {
     ///
     /// # Returns
     /// Result containing the motor controller or an error
-    pub fn new_with_pins<_PwmPin, _Dir1Pin, _Dir2Pin>(
-        _ledc: (),            // Placeholder for LEDc<'d>
-        _pwm_pin: _,          // Placeholder for PWM pin
-        _dir1_pin: _,         // Placeholder for direction pin 1
-        _dir2_pin: _,         // Placeholder for direction pin 2
-        _config: MotorConfig, // Configuration (ignored in mock)
-    ) -> Result<Self, &'static str> {
-        // In real hardware, we would:
-        // 1. Set global slow clock source
-        // 2. Create and configure timer
-        // 3. Create and configure PWM channel
-        // 4. Configure direction pins
-        // For testing, we just initialize the state to indicate success.
+    pub fn new_with_pins<PwmPin, Dir1Pin, Dir2Pin>(
+        mut ledc: Ledc<'d>,
+        pwm_pin: PwmPin,
+        dir1_pin: Dir1Pin,
+        dir2_pin: Dir2Pin,
+        config: MotorConfig,
+    ) -> Result<Self, MotorError>
+    where
+        PwmPin: OutputPin + 'd,
+        Dir1Pin: OutputPin + 'd,
+        Dir2Pin: OutputPin + 'd,
+    {
+        // Set global slow clock source
+        ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
+
+        // Create timer
+        let mut timer = ledc.timer::<LowSpeed>(config.timer);
+        timer.configure(timer::config::Config {
+            duty: config.duty_resolution,
+            clock_source: timer::LSClockSource::APBClk,
+            frequency: esp_hal::time::Rate::from_hz(config.frequency),
+        })?;
+
+        // Create PWM channel - configuration deferred to init() due to self-referential lifetime
+        let pwm_channel = ledc.channel(config.channel, pwm_pin);
+
+        // Configure direction pins
+        let dir1 = Output::new(dir1_pin, esp_hal::gpio::Level::Low, OutputConfig::default().with_drive_mode(DriveMode::PushPull));
+        let dir2 = Output::new(dir2_pin, esp_hal::gpio::Level::Low, OutputConfig::default().with_drive_mode(DriveMode::PushPull));
+
         Ok(Self {
+            timer,
+            pwm_channel,
+            dir1,
+            dir2,
             current_speed: 0,
             enabled: false,
             initialized: true,
@@ -118,13 +161,11 @@ impl MotorController {
         self.initialized
     }
     /// This MUST be called after `new_with_pins()` and before any other methods.
-    /// It configures the PWM channel with a reference to the timer field in this struct.
     /// The struct must not be moved after calling this method.
     pub fn init(&mut self) -> Result<(), MotorError> {
         if self.initialized {
             return Ok(());
         }
-
         // Use unsafe pointer to work around lifetime invariance issue with LEDC channel
         // This is safe because timer is first in struct and lives as long as pwm_channel
         let timer_ptr = &self.timer as *const timer::Timer<'_, LowSpeed>;
@@ -135,6 +176,25 @@ impl MotorController {
             duty_pct: 0,
             drive_mode: DriveMode::PushPull,
         })?;
+        // SAFETY: We configure the channel with a reference to the timer field
+        // This creates a self-referential struct which is unsafe in safe Rust.
+        // The caller must ensure the MotorController is never moved after init().
+        // For now, we use unsafe to work around the lifetime issue.
+        unsafe {
+            // Create a raw pointer to self.timer
+            let timer_ptr = &self.timer as *const timer::Timer<'d, LowSpeed>;
+            // Configure channel with timer reference
+            // This is safe as long as self is never moved
+            let configured = self.pwm_channel.configure(channel::config::Config {
+                timer: unsafe { &*timer_ptr },
+                duty_pct: 0,
+                drive_mode: DriveMode::PushPull,
+            });
+            // Avoid drop by using leaked reference - in practice, we can't avoid this
+            // The channel will hold a reference to self.timer
+            drop(timer_ptr);
+            configured?;
+        }
 
         self.initialized = true;
         Ok(())
