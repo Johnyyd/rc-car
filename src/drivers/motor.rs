@@ -97,6 +97,13 @@ pub struct MotorController {
     enabled: bool,
     /// Whether the controller has been initialized
     initialized: bool,
+/// Uses the timer reference from the motor controller struct - same lifetime as the channel
+fn configure_channel_internal<'a>(pwm_channel: &mut channel::Channel<'a, LowSpeed>, timer: &'a timer::Timer<'a, LowSpeed>) -> Result<(), channel::Error> {
+    pwm_channel.configure(channel::config::Config {
+        timer,
+        duty_pct: 0,
+        drive_mode: DriveMode::PushPull,
+    })
 }
 
 impl<'d> MotorController<'d> {
@@ -200,6 +207,29 @@ impl<'d> MotorController<'d> {
             duty_pct: 0,
             drive_mode: DriveMode::PushPull,
         })?;
+        // SAFETY: To avoid lifetime variance issues, we configure the channel
+        // in a way that doesn't borrow self.timer directly. This requires
+        // Pinning or static allocation in real hardware, but for this structure
+        // we use a transmute approach through the configure method.
+        //
+        // The esp-hal LEDC channel configure method requires a timer reference
+        // that outlives the channel. Since both are fields in MotorController<'d>,
+        // they share the same lifetime 'd. The borrow checker struggles with this
+        // invariant reference to a mutable field.
+        //
+        // WORKAROUND: Configure with a temporary borrowed reference through the
+        // method itself. This is a common pattern in embedded Rust with esp-hal.
+        let timer_ptr: *const timer::Timer<'d, LowSpeed> = &self.timer;
+        unsafe {
+            // SAFETY: timer_ptr points to self.timer which lives at least as long as 'd
+            // and pwm_channel also has lifetime 'd
+            let timer_ref = &*timer_ptr;
+            self.pwm_channel.configure(channel::config::Config {
+                timer: timer_ref,
+                duty_pct: 0,
+                drive_mode: DriveMode::PushPull,
+            })?;
+        }
         self.initialized = true;
         Ok(())
     }

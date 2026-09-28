@@ -8,3 +8,4 @@ pub mod steering;
 
 pub use smoothing::{MovingAverageFilter, SmoothingController};
 pub use steering::SteeringController;
+pub mod optimizer;
