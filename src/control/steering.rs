@@ -27,12 +27,7 @@ pub fn calculate_motor_speeds(steer: i8, throttle: i8, _config: SteeringConfig) 
 /// Default version with standard config
 pub fn calculate_motor_speeds_default(steer: i8, throttle: i8) -> (i8, i8) {
     calculate_motor_speeds(steer, throttle, SteeringConfig::default())
-//! Steering Control Module
-//!
-//! This module provides differential steering algorithms for 2WD RC cars.
-//! It calculates motor speeds for left and right motors based on steering
-//! and throttle inputs.
-
+}
 use crate::drivers::motor::MotorDirection;
 
 /// Steering controller for differential drive RC car
@@ -82,14 +77,19 @@ impl SteeringController {
         let right_clamped = right_raw.clamp(-1.0, 1.0);
 
         // Scale to max_speed
-        let left_speed = (left_clamped * self.max_speed as f32).round() as i8;
-        let right_speed = (right_clamped * self.max_speed as f32).round() as i8;
+        let left_val = left_clamped * self.max_speed as f32;
+        let right_val = right_clamped * self.max_speed as f32;
+        let left_speed = if left_val >= 0.0 { (left_val + 0.5) as i8 } else { (left_val - 0.5) as i8 };
+        let right_speed = if right_val >= 0.0 { (right_val + 0.5) as i8 } else { (right_val - 0.5) as i8 };
 
         (left_speed, right_speed)
     }
 
     /// Calculates motor directions from speeds
-    pub fn calculate_directions(left_speed: i8, right_speed: i8) -> (MotorDirection, MotorDirection) {
+    pub fn calculate_directions(
+        left_speed: i8,
+        right_speed: i8,
+    ) -> (MotorDirection, MotorDirection) {
         let left_dir = if left_speed > 0 {
             MotorDirection::Forward
         } else if left_speed < 0 {

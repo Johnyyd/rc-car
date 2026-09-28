@@ -121,17 +121,12 @@ impl MovingAverageSmoother {
     }
 }
 
-//! Motion Smoothing Module
-//!
-//! This module provides signal smoothing using moving average filters
-//! to reduce noise and provide smooth control inputs.
-
 /// Moving average filter for smoothing signals
 pub struct MovingAverageFilter {
     /// Window size for averaging
     window_size: usize,
     /// Buffer of recent samples
-    buffer: Vec<i8>,
+    buffer: [i8; 32],
     /// Current index in buffer
     current_index: usize,
     /// Whether buffer is full
@@ -144,9 +139,10 @@ impl MovingAverageFilter {
         if window_size == 0 {
             panic!("Window size must be greater than 0");
         }
+        let window_size = window_size.min(32);
         Self {
             window_size,
-            buffer: vec![0; window_size],
+            buffer: [0; 32],
             current_index: 0,
             buffer_full: false,
         }
@@ -171,14 +167,6 @@ impl MovingAverageFilter {
 
     /// Gets the current average of buffered samples
     pub fn get_average(&self) -> i8 {
-        let sum: i32 = if self.buffer_full {
-            self.buffer.iter().map(|&v| v as i32).sum()
-        } else {
-            // Only average over filled portion
-            let fill_count = self.current_index.min(self.window_size);
-            self.buffer[..fill_count].iter().map(|&v| v as i32).sum()
-        };
-
         let count = if self.buffer_full {
             self.window_size
         } else {
@@ -188,6 +176,12 @@ impl MovingAverageFilter {
         if count == 0 {
             return 0;
         }
+
+        let sum: i32 = if self.buffer_full {
+            self.buffer[..self.window_size].iter().map(|&v| v as i32).sum()
+        } else {
+            self.buffer[..count].iter().map(|&v| v as i32).sum()
+        };
 
         (sum / count as i32) as i8
     }

@@ -168,9 +168,6 @@ pub mod benchmark {
 
 #[cfg(test)]
 mod tests {
-    #![cfg(test)]
-    #![no_std]
-
     use super::*;
     use esp_hal::time::Instant;
 

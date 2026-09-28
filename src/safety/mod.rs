@@ -1,8 +1,7 @@
-//! Safety Monitor
+//! Safety Monitor Module for RC Car
 //!
-//! This module provides a safety watchdog for the RC car system,
-//! monitoring RC signal integrity and triggering emergency stops
-//! when signal is lost or unsafe conditions are detected.
+//! This module provides safety monitoring, signal loss detection,
+//! and emergency stop functionality for the RC car system.
 
 use esp_hal::time::Instant;
 
@@ -58,28 +57,17 @@ pub enum SafetyResult {
     Critical,
 }
 
-#[derive(Debug, Clone)]
-struct InnerState {
+/// Safety Monitor - watches RC signal and system state for safety violations
+pub struct SafetyMonitor {
     state: SafetyState,
     rc_status: RcSignalStatus,
     last_rc_change: Option<Instant>,
+    last_signal_time: Option<Instant>,
     runtime_start: Option<Instant>,
-}
-
-impl Default for InnerState {
-    fn default() -> Self {
-        Self {
-            state: SafetyState::Normal,
-            rc_status: RcSignalStatus::Present,
-            last_rc_change: None,
-            runtime_start: None,
-        }
-    }
-}
-
-/// Safety Monitor - watches RC signal and system state for safety violations
-pub struct SafetyMonitor {
-    inner: InnerState,
+    emergency_stop: bool,
+    signal_timeout_ms: u32,
+    max_speed: i8,
+    loop_count: u32,
 }
 
 impl Default for SafetyMonitor {
@@ -89,62 +77,72 @@ impl Default for SafetyMonitor {
 }
 
 impl SafetyMonitor {
-    /// Creates a new safety monitor
+    /// Creates a new safety monitor with default parameters (1s timeout, 100 max speed)
     pub fn new() -> Self {
+        Self::with_params(1000, 100)
+    }
+
+    /// Creates a new safety monitor with custom timeout and max speed
+    pub fn with_params(signal_timeout_ms: u32, max_speed: i8) -> Self {
         Self {
-            inner: InnerState::default(),
+            state: SafetyState::Normal,
+            rc_status: RcSignalStatus::Present,
+            last_rc_change: None,
+            last_signal_time: None,
+            runtime_start: None,
+            emergency_stop: false,
+            signal_timeout_ms,
+            max_speed: max_speed.clamp(0, 100),
+            loop_count: 0,
         }
     }
 
     /// Update RC signal status
     pub fn update_rc_status(&mut self, status: RcSignalStatus) {
-        let _old_state = self.inner.state;
-
-        self.inner.rc_status = status;
+        self.rc_status = status;
 
         match status {
             RcSignalStatus::Present => {
-                self.inner.last_rc_change = None;
-                // Transition from SignalLost back to Normal
-                if self.inner.state == SafetyState::SignalLost {
-                    self.inner.state = SafetyState::Normal;
+                self.last_rc_change = None;
+                self.last_signal_time = Some(Instant::now());
+                if self.state == SafetyState::SignalLost {
+                    self.state = SafetyState::Normal;
+                    self.emergency_stop = false;
                 }
             }
             RcSignalStatus::Lost => {
-                // Mark when signal was lost
-                self.inner.last_rc_change = Some(Instant::now());
-                // If we were in Normal, transition to SignalLost
-                if self.inner.state == SafetyState::Normal {
-                    self.inner.state = SafetyState::SignalLost;
+                self.last_rc_change = Some(Instant::now());
+                if self.state == SafetyState::Normal {
+                    self.state = SafetyState::SignalLost;
                 }
             }
             RcSignalStatus::Invalid => {
-                self.inner.rc_status = RcSignalStatus::Present; // reset to safe default
+                self.rc_status = RcSignalStatus::Present;
             }
         }
     }
 
     /// Check if emergency stop should be triggered
     pub fn check_emergency_stop(&mut self) -> SafetyResult {
-        let result = match self.inner.rc_status {
+        let result = match self.rc_status {
             RcSignalStatus::Present => SafetyResult::Ok,
             RcSignalStatus::Lost => {
-                // Check if signal lost for more than RC_SIGNAL_LOSS_TIMEOUT
-                if let Some(start) = self.inner.last_rc_change {
+                if let Some(start) = self.last_rc_change {
                     let elapsed = start.elapsed().as_secs();
                     if elapsed >= RC_SIGNAL_LOSS_TIMEOUT {
+                        self.emergency_stop = true;
                         return SafetyResult::EmergencyStop;
                     }
                 }
-                SafetyResult::Ok // not long enough yet
+                SafetyResult::Ok
             }
             RcSignalStatus::Invalid => SafetyResult::Critical,
         };
 
-        // Also check runtime limits
-        if let Some(start) = self.inner.runtime_start {
+        if let Some(start) = self.runtime_start {
             let elapsed = start.elapsed().as_secs();
             if elapsed >= MAX_RUNTIME_SECS {
+                self.emergency_stop = true;
                 return SafetyResult::EmergencyStop;
             }
         }
@@ -152,43 +150,117 @@ impl SafetyMonitor {
         result
     }
 
+    /// Updates the last signal time to now
+    pub fn signal_received(&mut self) {
+        self.last_signal_time = Some(Instant::now());
+        self.update_rc_status(RcSignalStatus::Present);
+    }
+
+    /// Checks if signal timeout has occurred based on milliseconds
+    pub fn check_signal_timeout(&mut self) -> bool {
+        if let Some(last_time) = self.last_signal_time {
+            let elapsed_ms = last_time.elapsed().as_millis() as u64;
+            if elapsed_ms >= self.signal_timeout_ms as u64 {
+                self.emergency_stop = true;
+                self.state = SafetyState::SignalLost;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Checks if emergency stop is active
+    pub fn is_emergency_stop(&self) -> bool {
+        self.emergency_stop || self.state == SafetyState::Critical
+    }
+
+    /// Activates emergency stop manually
+    pub fn activate_emergency_stop(&mut self) {
+        self.emergency_stop = true;
+        self.state = SafetyState::Critical;
+    }
+
+    /// Resets emergency stop (requires valid signal)
+    pub fn reset_emergency_stop(&mut self) {
+        if self.last_signal_time.is_some() || self.rc_status == RcSignalStatus::Present {
+            self.emergency_stop = false;
+            self.state = SafetyState::Normal;
+        }
+    }
+
+    /// Validates and clamps motor speed to safe limits
+    pub fn validate_speed(&self, speed: i8) -> i8 {
+        if self.is_emergency_stop() {
+            return 0;
+        }
+        speed.clamp(-self.max_speed, self.max_speed)
+    }
+
     /// Mark runtime start (when system starts operating)
     pub fn mark_runtime_start(&mut self) {
-        self.inner.runtime_start = Some(Instant::now());
+        self.runtime_start = Some(Instant::now());
     }
 
     /// Get current safety state
     pub fn state(&self) -> SafetyState {
-        self.inner.state
+        self.state
     }
 
     /// Get current RC signal status
     pub fn rc_status(&self) -> RcSignalStatus {
-        self.inner.rc_status
+        self.rc_status
     }
 
     /// Set the system to safe mode
     pub fn set_safe_mode(&mut self) {
-        self.inner.state = SafetyState::SafeMode;
+        self.state = SafetyState::SafeMode;
     }
 
     /// Reset the monitor to normal operation
     pub fn reset(&mut self) {
-        self.inner = InnerState::default();
+        self.state = SafetyState::Normal;
+        self.rc_status = RcSignalStatus::Present;
+        self.last_rc_change = None;
+        self.last_signal_time = None;
+        self.runtime_start = None;
+        self.emergency_stop = false;
+        self.loop_count = 0;
+    }
+
+    /// Increments loop counter
+    pub fn increment_loop(&mut self) {
+        self.loop_count = self.loop_count.wrapping_add(1);
+    }
+
+    /// Gets current loop count
+    pub fn get_loop_count(&self) -> u32 {
+        self.loop_count
+    }
+
+    /// Gets the maximum allowed speed
+    pub fn get_max_speed(&self) -> i8 {
+        self.max_speed
+    }
+
+    /// Sets the maximum allowed speed
+    pub fn set_max_speed(&mut self, max_speed: i8) {
+        self.max_speed = max_speed.clamp(0, 100);
+    }
+
+    /// Gets the signal timeout in milliseconds
+    pub fn get_signal_timeout_ms(&self) -> u32 {
+        self.signal_timeout_ms
+    }
+
+    /// Sets the signal timeout in milliseconds
+    pub fn set_signal_timeout_ms(&mut self, timeout_ms: u32) {
+        self.signal_timeout_ms = timeout_ms;
+    }
+
+    /// Gets time since last signal in milliseconds
+    pub fn get_time_since_signal_ms(&self) -> Option<u32> {
+        self.last_signal_time.map(|last_time| last_time.elapsed().as_millis() as u32)
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // We need a test crate to run tests since this is no_std
-    // The safety module tests will be run as integration tests
-}
-//! Safety module for RC car
-//!
-//! This module provides safety monitoring and emergency stop functionality.
-
 pub mod monitor;
-
-pub use monitor::SafetyMonitor;

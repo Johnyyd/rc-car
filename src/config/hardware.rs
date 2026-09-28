@@ -57,6 +57,11 @@ impl PinMappings {
         }
     }
 
+    /// Create new pin mappings (alias for default)
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Check for pin conflicts within the mapping
     pub fn has_conflicts(&self) -> bool {
         let pins = [
@@ -101,38 +106,14 @@ impl PinMappings {
             self.buzzer,
         ];
 
-        // ESP32 GPIOs 0-39 are generally valid (excluding strapping pins in some cases)
-        pins.iter().all(|&pin| pin <= 39 && pin >= 0)
+        for &pin in &pins {
+            // ESP32 valid GPIOs are generally 0-39 (excluding some strapped/input-only pins)
+            if pin > 39 {
+                return false;
+            }
+        }
+        true
     }
-}
-
-// Motor pin constants
-pub mod motor_pins {
-    pub const MOTOR1_PWM: u8 = 18;
-    pub const MOTOR1_DIR1: u8 = 19;
-    pub const MOTOR1_DIR2: u8 = 21;
-
-    pub const MOTOR2_PWM: u8 = 5;
-    pub const MOTOR2_DIR1: u8 = 17;
-    pub const MOTOR2_DIR2: u8 = 16;
-}
-
-// Receiver pin constants
-pub mod receiver_pins {
-    pub const CHANNEL1_THROTTLE: u8 = 32;
-    pub const CHANNEL2_STEERING: u8 = 33;
-}
-
-// LED pin constants
-pub mod led_pins {
-    pub const STATUS_LED: u8 = 2;
-    pub const ERROR_LED: u8 = 4;
-}
-
-// Safety pin constants
-pub mod safety_pins {
-    pub const EMERGENCY_STOP: u8 = 15;
-    pub const BUZZER: u8 = 23;
 }
 
 // PWM Configuration constants
@@ -155,6 +136,10 @@ pub mod safety {
     pub const MAX_SPEED_PERCENT: i8 = 100;
     pub const MIN_SPEED_PERCENT: i8 = -100;
     pub const EMERGENCY_STOP_THRESHOLD_MS: u64 = 1000;
+    pub const MAX_MOTOR_SPEED: i8 = 100;
+    pub const MIN_MOTOR_SPEED: i8 = -100;
+    pub const MAX_ACCELERATION: i8 = 5;
+    pub const WATCHDOG_TIMEOUT_MS: u32 = 1000;
 }
 
 // Test constants
@@ -167,6 +152,90 @@ pub mod test_config {
     }
 }
 
+/// Hardware constants for motor control
+pub mod constants {
+    /// PWM frequency for motor control (Hz)
+    pub const PWM_FREQUENCY_HZ: u32 = 20_000; // 20 kHz - good for motor control
+
+    /// PWM resolution (bits)
+    pub const PWM_RESOLUTION_BITS: u8 = 8; // 8-bit resolution (0-255)
+
+    /// Motor PWM duty cycle limits
+    pub const MOTOR_PWM_MIN: u8 = 0;
+    pub const MOTOR_PWM_MAX: u8 = 255;
+
+    /// RC signal timing constants (microseconds)
+    pub const RC_PULSE_MIN_US: u32 = 1000; // Minimum pulse width (full reverse/left)
+    pub const RC_PULSE_MAX_US: u32 = 2000; // Maximum pulse width (full forward/right)
+    pub const RC_PULSE_NEUTRAL_US: u32 = 1500; // Neutral pulse width (center/stop)
+
+    /// Control loop timing
+    pub const CONTROL_LOOP_MS: u64 = 20; // 50 Hz control loop
+
+    /// Status LED blink rate when active (ms)
+    pub const LED_BLINK_RATE_MS: u64 = 500; // Blink every 500ms when active
+}
+
+pub mod pins {
+    /// Motor Left PWM Pin
+    pub const MOTOR_LEFT_PWM: u8 = 18;
+    /// Motor Left Direction Pin 1
+    pub const MOTOR_LEFT_DIR1: u8 = 19;
+    /// Motor Left Direction Pin 2
+    pub const MOTOR_LEFT_DIR2: u8 = 21;
+    /// Motor Right PWM Pin
+    pub const MOTOR_RIGHT_PWM: u8 = 5;
+    /// Motor Right Direction Pin 1
+    pub const MOTOR_RIGHT_DIR1: u8 = 17;
+    /// Motor Right Direction Pin 2
+    pub const MOTOR_RIGHT_DIR2: u8 = 16;
+    /// RC Receiver Channel 1 (Steering)
+    pub const RC_CHANNEL1: u8 = 34;
+    /// RC Receiver Channel 2 (Throttle)
+    pub const RC_CHANNEL2: u8 = 35;
+    /// Status LED Pin
+    pub const STATUS_LED: u8 = 2;
+    /// Emergency Stop Button
+    pub const EMERGENCY_STOP: u8 = 0;
+    /// Battery Voltage Monitor
+    pub const BATTERY_MONITOR: u8 = 36;
+}
+
+pub mod pwm {
+    /// Motor PWM Frequency in Hz
+    pub const MOTOR_PWM_FREQUENCY: u32 = 20_000;
+    /// PWM Duty Resolution in bits
+    pub const PWM_DUTY_BITS: u8 = 8;
+    /// PWM Timer Number for Left Motor
+    pub const LEFT_MOTOR_TIMER: u8 = 0;
+    /// PWM Channel Number for Left Motor
+    pub const LEFT_MOTOR_CHANNEL: u8 = 0;
+    /// PWM Timer Number for Right Motor
+    pub const RIGHT_MOTOR_TIMER: u8 = 0;
+    /// PWM Channel Number for Right Motor
+    pub const RIGHT_MOTOR_CHANNEL: u8 = 1;
+}
+
+pub mod rc {
+    /// Minimum pulse width in microseconds
+    pub const MIN_PULSE_WIDTH: u16 = 1000;
+    /// Maximum pulse width in microseconds
+    pub const MAX_PULSE_WIDTH: u16 = 2000;
+    /// Neutral pulse width in microseconds
+    pub const NEUTRAL_PULSE_WIDTH: u16 = 1500;
+    /// RC signal timeout in milliseconds
+    pub const SIGNAL_TIMEOUT_MS: u32 = 1000;
+}
+
+pub mod system {
+    /// Main loop frequency in Hz
+    pub const LOOP_FREQUENCY_HZ: u32 = 100;
+    /// Control loop period in milliseconds
+    pub const LOOP_PERIOD_MS: u32 = 10;
+    /// Smoothing window size
+    pub const SMOOTHING_WINDOW_SIZE: usize = 5;
+}
+
 #[cfg(test)]
 mod tests {
     use super::PinMappings;
@@ -174,13 +243,10 @@ mod tests {
     #[test]
     fn test_default_pin_mappings_no_conflicts() {
         let mappings = PinMappings::default();
-        assert!(!mappings.has_conflicts(), "Default pin mappings should have no conflicts");
-    }
-
-    #[test]
-    fn test_default_pin_mappings_valid() {
-        let mappings = PinMappings::default();
-        assert!(mappings.is_valid(), "Default pin mappings should be valid");
+        assert!(
+            !mappings.has_conflicts(),
+            "Default pin mappings should have no conflicts"
+        );
     }
 
     #[test]
@@ -216,152 +282,4 @@ mod tests {
             }
         }
     }
-}
-/// Hardware Configuration for RC Car
-///
-/// This module defines the pin mappings and hardware constants for the ESP32-based RC car.
-
-/// Pin mappings for the RC car hardware
-#[derive(Debug, Clone, Copy)]
-pub struct PinMappings {
-    /// Left motor PWM pin
-    pub left_motor_pwm: u8,
-    /// Left motor direction pin 1 (forward)
-    pub left_motor_dir1: u8,
-    /// Left motor direction pin 2 (reverse)
-    pub left_motor_dir2: u8,
-    /// Right motor PWM pin
-    pub right_motor_pwm: u8,
-    /// Right motor direction pin 1 (forward)
-    pub right_motor_dir1: u8,
-    /// Right motor direction pin 2 (reverse)
-    pub right_motor_dir2: u8,
-    /// RC receiver channel 1 (steering) input
-    pub rc_ch1: u8,
-    /// RC receiver channel 2 (throttle) input
-    pub rc_ch2: u8,
-    /// Status LED pin
-    pub status_led: u8,
-}
-
-impl PinMappings {
-    /// Default pin mappings for common ESP32 RC car setup
-    ///
-    /// These pins can be adjusted based on actual hardware wiring
-    pub fn new() -> Self {
-        Self {
-            // Motor pins (using GPIO pins suitable for PWM)
-            left_motor_pwm: 18,   // PWM for left motor
-            left_motor_dir1: 19,  // Direction 1 for left motor
-            left_motor_dir2: 21,  // Direction 2 for left motor
-            right_motor_pwm: 22,  // PWM for right motor
-            right_motor_dir1: 23, // Direction 1 for right motor
-            right_motor_dir2: 25, // Direction 2 for right motor
-
-            // RC receiver inputs (using GPIO pins that can capture PWM signals)
-            rc_ch1: 32,   // Steering channel
-            rc_ch2: 33,   // Throttle channel
-
-            // Status LED (built-in LED on many ESP32 dev boards)
-            status_led: 2, // GPIO2 often connected to built-in LED
-        }
-    }
-}
-
-/// Hardware constants for motor control
-pub mod constants {
-    /// PWM frequency for motor control (Hz)
-    pub const PWM_FREQUENCY_HZ: u32 = 20_000; // 20 kHz - good for motor control
-
-    /// PWM resolution (bits)
-    pub const PWM_RESOLUTION_BITS: u8 = 8; // 8-bit resolution (0-255)
-
-    /// Motor PWM duty cycle limits
-    pub const MOTOR_PWM_MIN: u8 = 0;
-    pub const MOTOR_PWM_MAX: u8 = 255;
-
-    /// RC signal timing constants (microseconds)
-    pub const RC_PULSE_MIN_US: u32 = 1000;   // Minimum pulse width (full reverse/left)
-    pub const RC_PULSE_MAX_US: u32 = 2000;   // Maximum pulse width (full forward/right)
-    pub const RC_PULSE_NEUTRAL_US: u32 = 1500; // Neutral pulse width (center/stop)
-
-    /// Control loop timing
-    pub const CONTROL_LOOP_MS: u64 = 20; // 50 Hz control loop
-
-    /// Status LED blink rate when active (ms)
-    pub const LED_BLINK_RATE_MS: u64 = 500; // Blink every 500ms when active
-//! This module contains all hardware-specific constants including pin mappings,
-//! PWM configuration, RC receiver settings, and safety parameters.
-
-pub mod pins {
-    /// Motor Left PWM Pin
-    pub const MOTOR_LEFT_PWM: u8 = 18;
-    /// Motor Left Direction Pin 1
-    pub const MOTOR_LEFT_DIR1: u8 = 19;
-    /// Motor Left Direction Pin 2
-    pub const MOTOR_LEFT_DIR2: u8 = 21;
-    /// Motor Right PWM Pin
-    pub const MOTOR_RIGHT_PWM: u8 = 5;
-    /// Motor Right Direction Pin 1
-    pub const MOTOR_RIGHT_DIR1: u8 = 17;
-    /// Motor Right Direction Pin 2
-    pub const MOTOR_RIGHT_DIR2: u8 = 16;
-    /// RC Receiver Channel 1 (Steering)
-    pub const RC_CHANNEL1: u8 = 34;
-    /// RC Receiver Channel 2 (Throttle)
-    pub const RC_CHANNEL2: u8 = 35;
-    /// Status LED Pin
-    pub const STATUS_LED: u8 = 2;
-    /// Emergency Stop Button
-    pub const EMERGENCY_STOP: u8 = 0;
-    /// Battery Voltage Monitor
-    pub const BATTERY_MONITOR: u8 = 36;
-}
-
-pub mod pwm {
-    /// Motor PWM Frequency in Hz
-    /// Range: 1 kHz to 40 kHz for DC motors
-    pub const MOTOR_PWM_FREQUENCY: u32 = 20_000;
-    /// PWM Duty Resolution in bits
-    /// Valid values: 1-16 bits
-    pub const PWM_DUTY_BITS: u8 = 8;
-    /// PWM Timer Number for Left Motor
-    pub const LEFT_MOTOR_TIMER: u8 = 0;
-    /// PWM Channel Number for Left Motor
-    pub const LEFT_MOTOR_CHANNEL: u8 = 0;
-    /// PWM Timer Number for Right Motor
-    pub const RIGHT_MOTOR_TIMER: u8 = 0;
-    /// PWM Channel Number for Right Motor
-    pub const RIGHT_MOTOR_CHANNEL: u8 = 1;
-}
-
-pub mod rc {
-    /// Minimum pulse width in microseconds
-    pub const MIN_PULSE_WIDTH: u16 = 1000;
-    /// Maximum pulse width in microseconds
-    pub const MAX_PULSE_WIDTH: u16 = 2000;
-    /// Neutral pulse width in microseconds
-    pub const NEUTRAL_PULSE_WIDTH: u16 = 1500;
-    /// RC signal timeout in milliseconds
-    pub const SIGNAL_TIMEOUT_MS: u32 = 1000;
-}
-
-pub mod safety {
-    /// Maximum motor speed percentage
-    pub const MAX_MOTOR_SPEED: i8 = 100;
-    /// Minimum motor speed percentage
-    pub const MIN_MOTOR_SPEED: i8 = -100;
-    /// Maximum acceleration per cycle
-    pub const MAX_ACCELERATION: i8 = 5;
-    /// Watchdog timeout in milliseconds
-    pub const WATCHDOG_TIMEOUT_MS: u32 = 1000;
-}
-
-pub mod system {
-    /// Main loop frequency in Hz
-    pub const LOOP_FREQUENCY_HZ: u32 = 100;
-    /// Control loop period in milliseconds
-    pub const LOOP_PERIOD_MS: u32 = 10;
-    /// Smoothing window size
-    pub const SMOOTHING_WINDOW_SIZE: usize = 5;
 }

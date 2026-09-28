@@ -4,7 +4,3 @@
 //! subsystems: motor control, RC receiver, steering, safety, and smoothing.
 
 pub mod controller;
-
-/// Main application modules
-pub mod controller;
-

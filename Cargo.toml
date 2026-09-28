@@ -43,10 +43,4 @@ debug         = 2     # prefer slower builds but better debugging experience
 lto           = 'fat'
 opt-level     = 's'
 
-[lib]
-name = "rc_car"
-path = "src/lib.rs"
-
-[build-dependencies]
-esp-hal = { version = "~1.2.2", features = ["esp32"] }
 
