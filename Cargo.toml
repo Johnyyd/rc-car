@@ -9,12 +9,11 @@ name = "rc-car"
 path = "./src/bin/main.rs"
 
 [dependencies]
-esp-hal = { version = "~1.2.2", features = ["esp32"] }
+esp-hal = { version = "~1.2.2", default-features = false, features = ["esp32"] }
 
-esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32"] }
+esp-bootloader-esp-idf = { version = "0.6.0", default-features = false, features = ["esp32"] }
 
 critical-section = "1.2.0"
-
 
 # For fine tuning these settings, please refer to https://doc.rust-lang.org/cargo/reference/profiles.html
 [profile.dev]
