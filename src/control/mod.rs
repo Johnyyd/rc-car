@@ -1,5 +1,10 @@
-/// Control module for RC car
+//! Control module for RC car
+//!
+//! This module contains control algorithms including steering, smoothing,
+//! and motion control for the RC car.
+
+pub mod smoothing;
 pub mod steering;
 
-/// Control module for RC car operations.
-pub mod smoothing;
+pub use smoothing::{MovingAverageFilter, SmoothingController};
+pub use steering::SteeringController;

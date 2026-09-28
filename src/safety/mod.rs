@@ -185,3 +185,10 @@ mod tests {
     // We need a test crate to run tests since this is no_std
     // The safety module tests will be run as integration tests
 }
+//! Safety module for RC car
+//!
+//! This module provides safety monitoring and emergency stop functionality.
+
+pub mod monitor;
+
+pub use monitor::SafetyMonitor;
