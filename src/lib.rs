@@ -2,6 +2,7 @@
 
 pub mod config;
 pub mod drivers;
+pub mod safety;
 
 #[cfg(test)]
 mod tests {

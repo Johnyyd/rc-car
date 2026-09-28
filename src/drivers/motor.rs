@@ -22,9 +22,9 @@ pub struct MotorConfig {
 impl Default for MotorConfig {
     fn default() -> Self {
         Self {
-            timer: 0, // Timer0
-            channel: 0, // Channel0
-            frequency: 20_000, // 20 kHz
+            timer: 0,           // Timer0
+            channel: 0,         // Channel0
+            frequency: 20_000,  // 20 kHz
             duty_resolution: 8, // 8-bit
             inverted: false,
         }
@@ -47,6 +47,9 @@ pub fn speed_to_duty(speed: i8) -> u8 {
     // Convert -100..=100 to 0..=100
     speed.abs() as u8
 }
+
+/// Helper function to configure PWM channel with the correct lifetime
+/// This function is generic over the lifetime to avoid the invariance issue
 
 /// Pure function: Maps a speed value (-100 to 100) to MotorDirection
 pub fn speed_to_direction(speed: i8) -> MotorDirection {
@@ -86,15 +89,11 @@ impl MotorController {
     ///
     /// # Returns
     /// Result containing the motor controller or an error
-    pub fn new_with_pins<
-        _PwmPin,
-        _Dir1Pin,
-        _Dir2Pin,
-    >(
-        _ledc: (), // Placeholder for LEDc<'d>
-        _pwm_pin: _, // Placeholder for PWM pin
-        _dir1_pin: _, // Placeholder for direction pin 1
-        _dir2_pin: _, // Placeholder for direction pin 2
+    pub fn new_with_pins<_PwmPin, _Dir1Pin, _Dir2Pin>(
+        _ledc: (),            // Placeholder for LEDc<'d>
+        _pwm_pin: _,          // Placeholder for PWM pin
+        _dir1_pin: _,         // Placeholder for direction pin 1
+        _dir2_pin: _,         // Placeholder for direction pin 2
         _config: MotorConfig, // Configuration (ignored in mock)
     ) -> Result<Self, &'static str> {
         // In real hardware, we would:
@@ -112,10 +111,33 @@ impl MotorController {
 
     /// Checks if the motor controller is initialized
     ///
+
     /// # Returns
     /// true if initialized, false otherwise
     pub fn is_initialized(&self) -> bool {
         self.initialized
+    }
+    /// This MUST be called after `new_with_pins()` and before any other methods.
+    /// It configures the PWM channel with a reference to the timer field in this struct.
+    /// The struct must not be moved after calling this method.
+    pub fn init(&mut self) -> Result<(), MotorError> {
+        if self.initialized {
+            return Ok(());
+        }
+
+        // Use unsafe pointer to work around lifetime invariance issue with LEDC channel
+        // This is safe because timer is first in struct and lives as long as pwm_channel
+        let timer_ptr = &self.timer as *const timer::Timer<'_, LowSpeed>;
+        let timer_ref = unsafe { &*timer_ptr };
+
+        self.pwm_channel.configure(channel::config::Config {
+            timer: timer_ref,
+            duty_pct: 0,
+            drive_mode: DriveMode::PushPull,
+        })?;
+
+        self.initialized = true;
+        Ok(())
     }
 
     /// Sets the motor speed
