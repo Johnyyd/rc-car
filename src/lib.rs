@@ -3,6 +3,9 @@
 pub mod config;
 pub mod control;
 pub mod drivers;
+
+pub mod config;
+
 pub mod main;
 
 #[cfg(test)]
@@ -15,3 +18,4 @@ mod tests {
 fn panic(_info: &core::panic::PanicInfo) -> ! {
     loop {}
 }
+
